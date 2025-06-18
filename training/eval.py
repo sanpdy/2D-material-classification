@@ -93,6 +93,8 @@ class FlakeDataset(torch.utils.data.Dataset):
         mat_id = self.material2idx[mat]
         return image, mat_id, label
 
+# Load model and mappings
+print("Loading trained model...")
 checkpoint = torch.load('flake_layer_classifier_best.pth', map_location=DEVICE)
 label_to_idx = checkpoint['label_to_idx']
 idx_to_label = checkpoint['idx_to_label']
@@ -101,52 +103,113 @@ num_classes = checkpoint['num_classes']
 num_materials = checkpoint['num_materials']
 material_dim = checkpoint['material_dim']
 
+# Load validation indices if available (for consistent validation evaluation)
+train_idx = checkpoint.get('train_idx', None)
+val_idx = checkpoint.get('val_idx', None)
+
 model = FlakeLayerClassifier(num_materials, material_dim, num_classes, pretrained=True).to(DEVICE)
 model.load_state_dict(checkpoint['model_state_dict'])
 model.eval()
 
+# Data paths
 data_root = "/home/sankalp/flake_classification/GMMClassifier_bbox"
 train_dir = os.path.join(data_root, "train")
 test_dir = os.path.join(data_root, "test")
 
+# Transform for evaluation
 val_tf = transforms.Compose([
     transforms.Resize((224,224)),
     transforms.ToTensor(),
     transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225]),
 ])
 
-all_samples, all_labels = [], []
-for root, _, files in os.walk(train_dir):
-    for f in files:
-        if f.lower().endswith(('png','jpg','jpeg')):
-            all_samples.append(os.path.join(root, f))
-            all_labels.append(int(os.path.basename(root)))
+def evaluate_set(samples, labels, set_name):
+    """Common evaluation function"""
+    dataset = FlakeDataset(samples, labels, material2idx, val_tf)
+    loader = DataLoader(dataset, batch_size=32, shuffle=False, num_workers=4)
+    
+    all_preds, all_labels = [], []
+    with torch.no_grad():
+        for imgs, mats, labs in loader:
+            imgs, mats, labs = imgs.to(DEVICE), mats.to(DEVICE), labs.to(DEVICE)
+            outputs = model(imgs, mats)
+            preds = outputs.argmax(dim=1)
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labs.cpu().numpy())
+    
+    all_preds = np.array(all_preds)
+    all_labels = np.array(all_labels)
+    
+    print(f"\n{'='*50}")
+    print(f"{set_name} Results")
+    print(f"{'='*50}")
+    print("Classification Report:")
+    print(classification_report(all_labels, all_preds, 
+                              target_names=[str(idx_to_label[i]) for i in range(num_classes)]))
+    print("\nConfusion Matrix:")
+    print(confusion_matrix(all_labels, all_preds))
+    print(f"\nBalanced Accuracy: {balanced_accuracy_score(all_labels, all_preds):.4f}")
+    print(f"Overall Accuracy: {(all_preds == all_labels).mean():.4f}")
+    
+    return all_preds, all_labels
+
+# 1. Validation Set Evaluation (if indices are saved)
+if train_idx is not None and val_idx is not None:
+    print("Evaluating on validation set...")
+    # Load training data
+    train_samples, train_labels = [], []
+    for root, _, files in os.walk(train_dir):
+        for f in files:
+            if f.lower().endswith(('png','jpg','jpeg')):
+                train_samples.append(os.path.join(root, f))
+                train_labels.append(int(os.path.basename(root)))
+    
+    train_labels_mapped = [label_to_idx[label] for label in train_labels]
+    
+    # Extract validation set
+    val_samples = [train_samples[i] for i in val_idx]
+    val_labels = [train_labels_mapped[i] for i in val_idx]
+    
+    val_preds, val_true = evaluate_set(val_samples, val_labels, "Validation Set")
+
+# 2. Test Set Evaluation (completely unseen data)
+print("Evaluating on test set...")
+test_samples, test_labels = [], []
 for root, _, files in os.walk(test_dir):
     for f in files:
         if f.lower().endswith(('png','jpg','jpeg')):
-            all_samples.append(os.path.join(root, f))
-            all_labels.append(int(os.path.basename(root)))
+            test_samples.append(os.path.join(root, f))
+            test_labels.append(int(os.path.basename(root)))
 
-all_labels_mapped = [label_to_idx[label] for label in all_labels]
+# Map test labels (handle case where test has unseen labels)
+test_labels_mapped = []
+unseen_labels = []
+for label in test_labels:
+    if label in label_to_idx:
+        test_labels_mapped.append(label_to_idx[label])
+    else:
+        unseen_labels.append(label)
+        # You might want to skip these samples or handle them differently
 
-eval_ds = FlakeDataset(all_samples, all_labels_mapped, material2idx, val_tf)
-eval_loader = DataLoader(eval_ds, batch_size=32, shuffle=False, num_workers=4)
+if unseen_labels:
+    print(f"Warning: Found {len(unseen_labels)} samples with unseen labels: {set(unseen_labels)}")
+    # Filter out unseen labels for now
+    filtered_samples = []
+    filtered_labels = []
+    for sample, label in zip(test_samples, test_labels):
+        if label in label_to_idx:
+            filtered_samples.append(sample)
+            filtered_labels.append(label_to_idx[label])
+    test_samples = filtered_samples
+    test_labels_mapped = filtered_labels
 
-all_preds, all_labels = [], []
-with torch.no_grad():
-    for imgs, mats, labs in eval_loader:
-        imgs, mats, labs = imgs.to(DEVICE), mats.to(DEVICE), labs.to(DEVICE)
-        outputs = model(imgs, mats)
-        preds = outputs.argmax(dim=1)
-        all_preds.extend(preds.cpu().numpy())
-        all_labels.extend(labs.cpu().numpy())
+print(f"Evaluating on {len(test_samples)} test samples...")
+test_preds, test_true = evaluate_set(test_samples, test_labels_mapped, "Test Set")
 
-all_preds = np.array(all_preds)
-all_labels = np.array(all_labels)
-
-print("Classification Report:")
-print(classification_report(all_labels, all_preds, target_names=[str(idx_to_label[i]) for i in range(num_classes)]))
-print("\nConfusion Matrix:")
-print(confusion_matrix(all_labels, all_preds))
-print(f"\nBalanced Accuracy: {balanced_accuracy_score(all_labels, all_preds):.4f}")
-print(f"Overall Accuracy: {(all_preds == all_labels).mean():.4f}")
+print(f"\n{'='*50}")
+print("FINAL SUMMARY")
+print(f"{'='*50}")
+if 'val_preds' in locals():
+    print(f"Validation Balanced Accuracy: {balanced_accuracy_score(val_true, val_preds):.4f}")
+print(f"Test Balanced Accuracy: {balanced_accuracy_score(test_true, test_preds):.4f}")
+print("Evaluation complete!")
