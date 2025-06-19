@@ -1,4 +1,3 @@
-# data_prep_bbox.py: Prepare crops using COCO bboxes only (parsing category names correctly)
 import json
 import re
 import cv2
@@ -19,8 +18,6 @@ for split in SPLITS:
         with open(ann_path) as f:
             coco = json.load(f)
 
-        # build category ID -> layer number mapping from JSON categories
-        # category names like '1-Layer', '2-Layer', etc.
         cat_map = {}
         for cat in coco.get("categories", []):
             name = cat.get("name", "")
@@ -48,10 +45,9 @@ for split in SPLITS:
                 print(f"⚠️  Cannot load image: {img_path}")
                 continue
 
-            # crop by bbox for each annotation
             for i, a in enumerate(by_img.get(img_id, [])):
                 cid = a.get("category_id")
-                layer = cat_map.get(cid, cid)  # map category ID to actual layer
+                layer = cat_map.get(cid, cid)
                 x, y, w, h = map(int, a.get("bbox", [0,0,0,0]))
 
                 # simple bbox crop
@@ -59,12 +55,9 @@ for split in SPLITS:
                 if crop.size == 0:
                     continue
 
-                # prepare output directory and filename
                 out_dir = OUT_ROOT / split / str(layer)
                 out_dir.mkdir(parents=True, exist_ok=True)
                 out_name = f"{mat}_{img_id:04d}_ann{i}_L{layer}.png"
-
-                # save crop
                 cv2.imwrite(str(out_dir / out_name), crop)
 
 print("Done! Your bbox crops are in:\n", OUT_ROOT)

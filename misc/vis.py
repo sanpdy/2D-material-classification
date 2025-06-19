@@ -15,7 +15,7 @@ def visualize_predictions_and_gt(
 ):
     img = cv2.imread(image_path)
     if img is None:
-        print(f"⚠️  Cannot load image: {image_path}")
+        print(f"Cannot load image: {image_path}")
         return
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
