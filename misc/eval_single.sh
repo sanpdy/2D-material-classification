@@ -1,11 +1,13 @@
 #!/bin/bash
 
 # Configuration
+
 YOLO_MODEL_PATH="/home/sankalp/flake_classification/models/best.pt"
+#YOLO_MODEL_PATH="/home/sankalp/yolo_flake_detection/new_flake_runs/exp1/weights/best.pt"
 CLASSIFIER_MODEL_PATH="/home/sankalp/flake_classification/models/flake_classifier.pth"
 CLASS_NAMES_FILE="/home/sankalp/flake_classification/classes.txt"
 OUTPUT_DIR="/home/sankalp/flake_classification/single_image_results"
-CONFIDENCE_THRESHOLD=0.95
+CONFIDENCE_THRESHOLD=0.5
 DEVICE="cuda:2"  # or cuda:1, cuda:0, cpu
 
 # Check if image path is provided
